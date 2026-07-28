@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>실시간 마스크 감지 시스템</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+    <style>
+        body { font-family: 'Pretendard', sans-serif; text-align: center; background: #f8f9fa; margin: 0; padding: 20px; }
+        .app-card { max-width: 450px; margin: 0 auto; background: white; border-radius: 20px; padding: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
+        #webcam-container { width: 100%; border-radius: 15px; overflow: hidden; transform: rotateY(180deg); background: #000; margin-bottom: 20px; }
+        canvas { width: 100% !important; height: auto !important; }
+        .status-box { padding: 20px; border-radius: 15px; font-size: 1.4rem; font-weight: bold; margin-bottom: 20px; }
+        .on { background: #e3f9e5; color: #1f9d55; border: 2px solid #1f9d55; }
+        .off { background: #fff0f0; color: #e74c3c; border: 2px solid #e74c3c; }
+        .wait { background: #f1f3f5; color: #868e96; }
+        button { width: 100%; padding: 18px; font-size: 1.2rem; font-weight: bold; background: #0984e3; color: white; border: none; border-radius: 12px; cursor: pointer; }
+        .debug-log { background: #333; color: #00ff00; padding: 10px; border-radius: 10px; font-family: monospace; font-size: 0.9rem; text-align: left; margin-top: 15px; }
+    </style>
+</head>
+<body>
+
+<div class="app-card">
+    <h2>마스크 AI 실시간 감지</h2>
+    <div id="webcam-container"></div>
+    <div id="status-display" class="status-box wait">버튼을 눌러 시작하세요</div>
+    <button id="start-btn" onclick="init()">AI 탐지 시작</button>
+    <div id="debug-log" class="debug-log">인식 결과 대기 중...</div>
+</div>
+
+<script>
+    // 🔗 본인의 모델 URL (현재 주소 그대로 유지)
+    const URL = "https://teachablemachine.withgoogle.com/models/cxP5dmJ7J/";
+
+    let model, webcam;
+    let isRunning = false;
+
+    // 음성 안내 함수 (이전 음성을 즉시 취소하고 새로 말함)
+    function speak(text) {
+        window.speechSynthesis.cancel(); // 겹침 방지
+        const msg = new SpeechSynthesisUtterance(text);
+        msg.lang = 'ko-KR';
+        msg.rate = 1.1; // 약간 빠르게 설정
+        window.speechSynthesis.speak(msg);
+    }
+
+    async function init() {
+        if (isRunning) return; // 이미 실행 중이면 중복 실행 방지
+        
+        const btn = document.getElementById("start-btn");
+        btn.disabled = true;
+        btn.innerText = "시스템 작동 중...";
+
+        try {
+            model = await tmImage.load(URL + "model.json", URL + "metadata.json");
+            
+            webcam = new tmImage.Webcam(400, 400, true);
+            await webcam.setup({ facingMode: "user" });
+            await webcam.play();
+            
+            // 핵심: 기존 화면을 비우고 하나만 추가하여 중복 방지
+            const container = document.getElementById("webcam-container");
+            container.innerHTML = ""; 
+            container.appendChild(webcam.canvas);
+            
+            isRunning = true;
+            window.requestAnimationFrame(loop);
+        } catch (e) {
+            alert("카메라 연결 오류!");
+            btn.disabled = false;
+        }
+    }
+
+    async function loop() {
+        if (!isRunning) return;
+        webcam.update();
+        await predict();
+        window.requestAnimationFrame(loop);
+    }
+
+    async function predict() {
+        const prediction = await model.predict(webcam.canvas);
+        const statusDiv = document.getElementById("status-display");
+        const debugDiv = document.getElementById("debug-log");
+
+        let debugText = "🔍 <b>현재 인식:</b><br>";
+        let topClass = "";
+        let topProb = 0;
+
+        for (let i = 0; i < prediction.length; i++) {
+            const prob = (prediction[i].probability * 100).toFixed(0);
+            debugText += `${prediction[i].className}: ${prob}%<br>`;
+            if (prediction[i].probability > topProb) {
+                topProb = prediction[i].probability;
+                topClass = prediction[i].className;
+            }
+        }
+        debugDiv.innerHTML = debugText;
+
+        // 80% 이상의 확신이 있을 때 작동
+        if (topProb > 0.8) {
+            // 사용자님의 모델 클래스 이름 '마스크'와 '노마스크'에 맞게 수정됨
+            if (topClass === "마스크") {
+                statusDiv.innerText = "✅ 환영합니다!";
+                statusDiv.className = "status-box on";
+                // 말하기가 진행 중이지 않을 때만 실행하여 무한 반복
+                if (!window.speechSynthesis.speaking) speak("환영합니다");
+            } else if (topClass === "노마스크") {
+                statusDiv.innerText = "❌ 마스크를 써주세요!";
+                statusDiv.className = "status-box off";
+                if (!window.speechSynthesis.speaking) speak("마스크를 쓰고 입장해주세요");
+            }
+        }
+    }
+</script>
+</body>
+</html>
